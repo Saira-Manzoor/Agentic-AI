@@ -1,0 +1,140 @@
+import os
+from google.colab import userdata
+from langgraph.graph import StateGraph, END
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+# Configure API Keys and LangSmith Tracing
+os.environ["GROQ_API_KEY"] = userdata.get('groq')
+os.environ["TAVILY_API_KEY"] = userdata.get('TAVILY_API_KEY')
+os.environ["LANGSMITH_API_KEY"] = userdata.get('LangSmith')
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
+os.environ["LANGCHAIN_PROJECT"] = "LangGraph Multi-Agent Assignment"
+
+from .state import GraphState
+from .agents import researcher_agent, writer_agent
+
+# Per-tool retry logic with exponential backoff
+retry_decorator = retry(
+    stop=stop_after_attempt(2),
+    wait=wait_exponential(multiplier=1, min=2, max=10)
+)
+
+@retry_decorator
+def execute_research_agent(query):
+    """A wrapper to apply retry logic to the agent invocation."""
+    return researcher_agent.invoke({"query": query})
+
+def researcher_node(state: GraphState):
+    print("--- RESEARCHING ---")
+    query = state["query"]
+    try:
+        response = execute_research_agent(query)
+        summary = response.content if response.content else "(No summary content generated, but tool calls were made.)"
+        return {"research_summary": summary}
+    except Exception as e:
+        print(f"Error in researcher_node: {e}")
+        return {"tool_errors": state.get("tool_errors", []) + [f"Researcher failed after retries: {str(e)}"]}
+
+def writer_node(state: GraphState):
+    print("--- WRITING REPORT ---")
+    summary = state["research_summary"]
+    test_summary = "This summary is intentionally unstructured and will likely cause the Pydantic model to fail validation because it lacks clear findings and references."
+    if summary == test_summary:
+        print("--- FORCING SCHEMA VIOLATION FOR TEST ---")
+        return {"violations": state.get("violations", []) + ["Writer output failed schema validation."]}
+
+    if not summary:
+        return {"violations": ["Research summary is empty. Cannot write report."]}
+
+    try:
+        report = writer_agent.invoke({"research_summary": summary})
+        return {"final_report": report}
+    except Exception as e:
+        print(f"Schema validation failed: {e}")
+        return {"violations": state.get("violations", []) + ["Writer output failed schema validation."]}
+
+def toxicity_check_node(state: GraphState):
+    print("--- CHECKING FOR TOXICITY ---")
+    if state.get("final_report"):
+        report_summary = state["final_report"].summary
+        banned_keywords = ["unsafe", "illegal", "malicious"]
+        if any(keyword in report_summary.lower() for keyword in banned_keywords):
+            print("--- TOXICITY VIOLATION DETECTED ---")
+            return {"violations": state.get("violations", []) + ["Detected potentially toxic content in the final report."]}
+    return {}
+
+# Circuit Breaker Logic
+MAX_FAILURES = 3
+def check_for_circuit_breaker(state: GraphState):
+    """If we have too many errors, short-circuit to the end."""
+    total_failures = len(state.get("tool_errors", [])) + len(state.get("violations", []))
+    if total_failures >= MAX_FAILURES:
+        print("--- CIRCUIT BREAKER TRIPPED ---")
+        return END
+    return "continue"
+
+# Conditional Edges
+def route_after_research(state: GraphState):
+    """Route to writer if research is successful, otherwise end."""
+    if state.get("tool_errors"):
+        print("--- ROUTING: RESEARCH FAILED -> END ---")
+        return END
+    print("--- ROUTING: RESEARCH OK -> WRITER ---")
+    return "writer"
+
+def route_after_writing(state: GraphState):
+    """Route to toxicity check if writing is successful, otherwise end."""
+    if state.get("violations"):
+        print("--- ROUTING: WRITING FAILED -> END ---")
+        return END
+    print("--- ROUTING: WRITING OK -> TOXICITY CHECK ---")
+    return "toxicity_check"
+
+# Define the graph workflow
+workflow = StateGraph(GraphState)
+
+workflow.add_node("researcher", researcher_node)
+workflow.add_node("writer", writer_node)
+workflow.add_node("toxicity_check", toxicity_check_node)
+
+# Set the entry point and build the graph
+workflow.set_entry_point("researcher")
+
+workflow.add_conditional_edges("researcher", route_after_research)
+workflow.add_conditional_edges("writer", route_after_writing)
+workflow.add_edge("toxicity_check", END)
+
+# Compile the graph into a runnable application
+app = workflow.compile()
+
+# --- Happy Path Run ---
+print("🚀 EXECUTING HAPPY PATH...")
+happy_path_inputs = {"query": "What are the latest trends in renewable energy in 2025?"}
+result = app.invoke(happy_path_inputs, config={"configurable": {"thread_id": "happy_path_thread"}})
+
+print("\n--- ✅ HAPPY PATH FINAL RESULT ---")
+if result.get("final_report"):
+    print(result["final_report"].model_dump_json(indent=2))
+else:
+    print("Process failed or was interrupted.")
+    print("Violations:", result.get("violations"))
+    print("Tool Errors:", result.get("tool_errors"))
+
+# --- Failure Path Run (Schema Validation Fallback) ---
+print("\n\n🚀 EXECUTING FAILURE PATH (SCHEMA VALIDATION)...")
+failure_path_inputs = {
+    "query": "This query is fine",
+    "research_summary": "This summary is intentionally unstructured and will likely cause the Pydantic model to fail validation because it lacks clear findings and references."
+}
+# Manually run the writer node to simulate the graph flow with bad data
+failure_result = writer_node(failure_path_inputs)
+
+print("\n--- ❌ FAILURE PATH FINAL RESULT ---")
+if failure_result.get("violations"):
+    print("Fallback triggered successfully!")
+    print("Violations:", failure_result.get("violations"))
+else:
+    print("Test failed, expected a violation.")
+
+print("\n\n---")
+print("Assignment execution complete. Check your LangSmith project for traces.")

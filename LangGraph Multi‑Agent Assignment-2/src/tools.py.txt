@@ -1,0 +1,40 @@
+from langchain_community.tools.tavily_search import TavilySearchResults
+from langchain_core.tools import tool
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+# 1. Web Search Tool (Real)
+search_tool = TavilySearchResults(max_results=3)
+
+# 2. File Save Tool (Real)
+@tool
+def save_to_file(report_json: str, filename: str) -> str:
+    """Saves the given report content (in JSON format) to a file."""
+    try:
+        with open(filename, 'w') as f:
+            f.write(report_json)
+        return f"Report saved successfully to {filename}"
+    except Exception as e:
+        return f"Error saving file: {e}"
+
+# 3. Calculator Tool (Simple/Stubbed)
+@tool
+def calculator(expression: str) -> str:
+    """A simple calculator to evaluate a mathematical expression."""
+    try:
+        return str(eval(expression, {"__builtins__": None}, {}))
+    except Exception as e:
+        return f"Error evaluating expression: {e}"
+
+# 4. Weather Tool (Stubbed to demonstrate failure)
+@tool
+def get_weather(city: str) -> str:
+    """Gets the weather for a city. Fails for 'tokyo' to test fallbacks."""
+    if city.lower() == "tokyo":
+        raise ValueError("Simulated API limit reached for Tokyo weather.")
+    return f"The weather in {city} is sunny and 25°C."
+
+# A list of all tools for the agents
+all_tools = [search_tool, save_to_file, calculator, get_weather]
+
+# Note: The assignment suggests separating tools further (e.g., search.py, weather_stub.py).
+# For this code, consolidating all tools into one file is more practical as they are all defined in a single block.

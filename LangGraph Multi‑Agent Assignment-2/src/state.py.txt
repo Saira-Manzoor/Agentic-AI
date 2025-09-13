@@ -1,0 +1,18 @@
+from typing import List, TypedDict, Optional
+from pydantic import BaseModel, Field
+
+class GraphState(TypedDict):
+    """Represents the state of our graph."""
+    query: str
+    research_summary: Optional[str]
+    report: Optional[str]
+    violations: List[str]
+    tool_errors: List[str]
+    final_report: Optional["MarketResearchReport"]
+
+class MarketResearchReport(BaseModel):
+    """Pydantic schema for the final market research report."""
+    topic: str = Field(description="The topic of the research")
+    key_findings: List[str] = Field(description="A list of structured facts or key findings.")
+    summary: str = Field(description="A generated brief/summary of the findings.")
+    references: List[str] = Field(description="A list of URLs for the public sources used.")

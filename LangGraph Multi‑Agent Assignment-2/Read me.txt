@@ -1,0 +1,45 @@
+# LangGraph Multi-Agent Assignment
+
+This project implements a multi-agent workflow using LangGraph to fulfill the "Market Researcher Analyst -> Writer" scenario. It demonstrates agent collaboration, structured outputs, and robust error handling.
+
+## 🚀 Key Features
+
+* **Two Specialized Agents:** A `Researcher` agent for data retrieval and a `Writer` agent for structured report generation.
+* **Structured Outputs:** The `Writer` agent produces a `MarketResearchReport` Pydantic model, ensuring a consistent and valid final output.
+* **Robust Fallbacks:**
+    * **Per-node retry logic:** The `researcher_node` includes retries with exponential backoff to handle transient API failures.
+    * **Schema validation fallback:** The `writer_node` gracefully handles cases where the LLM fails to produce a valid `MarketResearchReport` JSON schema.
+    * **Toxicity Check:** A simple guardrail is implemented to check the final report for potentially unsafe keywords.
+* **Observability:** The project is configured for LangSmith tracing to provide full visibility into the agent's decision-making process and tool usage.
+
+## 🛠️ Setup and Installation
+
+1.  **Clone the repository:**
+    ```bash
+    git clone <your-repo-url>
+    cd <your-repo-name>
+    ```
+
+2.  **Install dependencies:**
+    ```bash
+    pip install -r requirements.txt
+    ```
+    (Note: You can create `requirements.txt` from your Colab `!pip install` commands.)
+
+3.  **Configure API Keys:**
+    Create a file named `.env` in the root directory and add your API keys. You can use the provided `.env.example` as a template.
+
+## 🔑 Environment Variables
+
+This project requires the following environment variables to be set up in a `.env` file:
+
+* `GROQ_API_KEY`: Your API key for the Groq LLM.
+* `TAVILY_API_KEY`: Your API key for the Tavily web search tool.
+* `LANGSMITH_API_KEY`: Your API key for LangSmith tracing and observability.
+
+## 🏃 How to Run
+
+You can run the application directly from the `src` directory.
+
+```bash
+python -m src.graph
